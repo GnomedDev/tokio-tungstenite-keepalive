@@ -26,7 +26,7 @@ pub struct KeptAliveWebSocket<S> {
 impl<S> KeptAliveWebSocket<S>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static,
-    <WebSocketStream<S> as futures::Stream>::Item: Is<Type=Message> + Send,
+    <WebSocketStream<S> as futures::Stream>::Item: Is<Type=Result<Message, tungstenite::Error>> + Send,
     WebSocketStream<S>: futures::Stream,
 {
     /// Wraps a websocket with to handle Ping messages as soon as they are recieved, while buffering
@@ -58,17 +58,14 @@ where
             futures::select! {
                 ws_msg = ws.next() => {
                     let ws_msg = if let Some(msg) = ws_msg {
-                        narrow(msg)
+                        narrow(msg)?
                     } else {
                         return Ok(());
                     };
 
-                    match ws_msg {
-                        Message::Ping(msg) => ws.send(Message::Pong(msg)).await?,
-                        msg => if next_chan.send(msg).is_err() {
-                            return Ok(())
-                        },
-                    };
+                    if next_chan.send(ws_msg).is_err() {
+                        return Ok(())
+                    }
                 },
                 to_send = send_chan.recv().fuse() => {
                     if let Some(to_send) = to_send {
@@ -80,7 +77,9 @@ where
             }
         }
     }
+}
 
+impl<S> KeptAliveWebSocket<S> {
     /// Sends a message to the websocket, without waiting until it has been sent.
     ///
     /// # Errors
